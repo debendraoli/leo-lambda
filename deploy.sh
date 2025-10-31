@@ -17,8 +17,6 @@ set -euo pipefail
 #   IMAGE_TAG=<git_sha_or_timestamp> \
 #   PLATFORMS="linux/amd64,linux/arm64" \
 #   TAG_LATEST=1 \
-#   LEO_VERSION=v3.2.0 \
-#   LEO_ASSET=leo-mainnet-x86_64-unknown-linux-gnu.zip \
 #   LAMBDA_ROLE_ARN=arn:aws:iam::123456789012:role/lambda-execution-role \  # only needed when creating function
 #   # Optional Lambda env vars:
 #   ALLOWED_COMMANDS=execute \
@@ -72,8 +70,6 @@ if [[ -z "${IMAGE_TAG:-}" ]]; then
 fi
 PLATFORMS="${PLATFORMS:-linux/amd64}"
 TAG_LATEST="${TAG_LATEST:-1}"
-LEO_VERSION="${LEO_VERSION:-}"
-LEO_ASSET="${LEO_ASSET:-}"
 
 # Function URL and CORS defaults
 CREATE_FUNCTION_URL="${CREATE_FUNCTION_URL:-1}"
@@ -90,8 +86,6 @@ echo "==> Function: ${FUNCTION_NAME}"
 echo "==> ECR repo: ${ECR_URI}"
 echo "==> Image tag: ${IMAGE_TAG}"
 echo "==> Platforms: ${PLATFORMS}"
-if [[ -n "${LEO_VERSION}" ]]; then echo "==> LEO_VERSION: ${LEO_VERSION}"; fi
-if [[ -n "${LEO_ASSET}" ]]; then echo "==> LEO_ASSET:   ${LEO_ASSET}"; fi
 
 echo "==> Ensuring ECR repository exists"
 if ! aws_cli ecr describe-repositories --repository-names "${REPO_NAME}" --region "${AWS_REGION}" >/dev/null 2>&1; then
@@ -159,8 +153,6 @@ echo "==> Building and pushing image"
 echo "Selected platform: ${SELECTED_PLATFORM} (Lambda arch: ${LAMBDA_ARCH})"
 export BUILDX_NO_DEFAULT_ATTESTATIONS=1
 BUILD_ARGS=()
-if [[ -n "${LEO_VERSION}" ]]; then BUILD_ARGS+=(--build-arg "LEO_VERSION=${LEO_VERSION}"); fi
-if [[ -n "${LEO_ASSET}" ]]; then BUILD_ARGS+=(--build-arg "LEO_ASSET=${LEO_ASSET}"); fi
 
 COMMON_BUILD_ARGS=(--platform "${SELECTED_PLATFORM}" -t "${ECR_URI}:${IMAGE_TAG}")
 if [[ "${TAG_LATEST}" == "1" ]]; then
@@ -222,7 +214,7 @@ else
 fi
 
 # Merge or set environment variables when any of the known vars are provided
-KNOWN_ENV_KEYS=(ALLOWED_COMMANDS ALLOWED_CONTRACTS LEO_PRIVATE_KEY LEO_BIN)
+KNOWN_ENV_KEYS=(ALLOWED_COMMANDS ALLOWED_CONTRACTS LEO_PRIVATE_KEY LEO_BIN RPC_URL)
 PROVIDED_COUNT=0
 for k in "${KNOWN_ENV_KEYS[@]}"; do
   if [[ -n "${!k:-}" ]]; then
@@ -288,15 +280,31 @@ if [[ "${CREATE_FUNCTION_URL}" == "1" ]]; then
       --cors "AllowOrigins=${CORS_ALLOW_ORIGINS},AllowMethods=${CORS_ALLOW_METHODS},AllowHeaders=${CORS_ALLOW_HEADERS}" \
       --region "${AWS_REGION}" >/dev/null
   fi
-  # When using auth NONE, grant public invoke permission (idempotent)
+  # When using auth NONE, grant public invoke permission (idempotent, with explicit check)
   if [[ "${FUNCTION_URL_AUTH}" == "NONE" ]]; then
-    aws_cli lambda add-permission \
-      --function-name "${FUNCTION_NAME}" \
-      --statement-id function-url-public \
-      --action lambda:InvokeFunctionUrl \
-      --principal '*' \
-      --function-url-auth-type NONE \
-      --region "${AWS_REGION}" >/dev/null || true
+    echo "==> Ensuring public permission for Function URL (id=function-url-public)"
+    POLICY_JSON=$(aws_cli lambda get-policy --function-name "${FUNCTION_NAME}" --region "${AWS_REGION}" --output json 2>/dev/null || echo '{}')
+    HAS_SID=0
+    if command -v jq >/dev/null 2>&1; then
+      if echo "${POLICY_JSON}" | jq -e '.Policy? | fromjson | .Statement[]? | select(.Sid == "function-url-public")' >/dev/null 2>&1; then
+        HAS_SID=1
+      fi
+    else
+      if echo "${POLICY_JSON}" | grep -q '"Sid":"function-url-public"'; then
+        HAS_SID=1
+      fi
+    fi
+    if [[ ${HAS_SID} -eq 1 ]]; then
+      echo "Permission already exists; skipping add-permission"
+    else
+      aws_cli lambda add-permission \
+        --function-name "${FUNCTION_NAME}" \
+        --statement-id function-url-public \
+        --action lambda:InvokeFunctionUrl \
+        --principal '*' \
+        --function-url-auth-type NONE \
+        --region "${AWS_REGION}" >/dev/null || true
+    fi
   fi
 fi
 

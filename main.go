@@ -26,8 +26,6 @@ type InvokeRequest struct {
 	Args []string `json:"args"`
 	// Alternative to Args; a shell-like string (without the leading 'leo') which will be parsed into args
 	Cmd string `json:"cmd"`
-	// Timeout is deprecated/ignored; Lambda enforces the overall timeout.
-	Timeout string `json:"timeout,omitempty"`
 	// Optional working directory. Defaults to "/tmp/leo-work".
 	Workdir string `json:"workdir"`
 	// Optional additional environment variables to pass through
@@ -247,6 +245,11 @@ func handler(ctx context.Context, req events.LambdaFunctionURLRequest) (events.L
 		return jsonResp(http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("failed to prepare workdir: %v", err)}), nil
 	}
 
+	// Ensure leo uses this workdir as its home directory unless overridden
+	if !hasAnyFlag(args, "--home") {
+		args = injectFlagValueAfterSubcommand(args, subcmd, "--home", workdir)
+	}
+
 	// Determine binary path
 	bin := cfgEnv.LeoBin
 
@@ -282,6 +285,7 @@ func handler(ctx context.Context, req events.LambdaFunctionURLRequest) (events.L
 		Meta: map[string]string{
 			"workdir": workdir,
 			"bin":     bin,
+			"home":    getFlagValue(args, "--home"),
 		},
 	}
 
@@ -313,7 +317,7 @@ func firstSubcommand(args []string) (string, error) {
 		return "", errors.New("no arguments provided")
 	}
 	skipFlags := true
-	for i := range args {
+	for i := 0; i < len(args); i++ {
 		tok := args[i]
 		if skipFlags {
 			if tok == "--" {
@@ -402,6 +406,28 @@ func firstNonEmpty(vals ...string) string {
 	for _, v := range vals {
 		if strings.TrimSpace(v) != "" {
 			return v
+		}
+	}
+	return ""
+}
+
+// getFlagValue returns the value of a flag from args in either forms:
+//
+//	--flag value
+//	--flag=value
+//
+// It returns empty string if not found.
+func getFlagValue(args []string, flag string) string {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == flag {
+			if i+1 < len(args) {
+				return args[i+1]
+			}
+			return ""
+		}
+		if strings.HasPrefix(a, flag+"=") {
+			return strings.TrimPrefix(a, flag+"=")
 		}
 	}
 	return ""

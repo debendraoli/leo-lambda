@@ -150,7 +150,7 @@ func TestContractAllowlist_BlocksContract(t *testing.T) {
 
 func TestPrivateKeyInjection_WhenMissingInArgs(t *testing.T) {
 	t.Setenv("CONFIG_RELOAD_EACH_INVOCATION", "1")
-	t.Setenv("DRY_RUN", "false")
+	t.Setenv("DRY_RUN", "true")
 	t.Setenv("ALLOWED_COMMANDS", "execute")
 	t.Setenv("ALLOWED_CONTRACTS", "vlink_token_service_v7.aleo")
 	t.Setenv("LEO_PRIVATE_KEY", "abc123")

@@ -36,7 +36,7 @@ func Run(parent context.Context, cfg Config) Result {
 		cfg.MaxOutputBytes = 5_000_000
 	}
 	if strings.TrimSpace(cfg.WorkDir) == "" {
-		cfg.WorkDir = "."
+		cfg.WorkDir = "/tmp"
 	}
 
 	// Only enforce a timeout if explicitly provided. Otherwise, rely on the parent
