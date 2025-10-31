@@ -2,8 +2,6 @@
 
 This project exposes a minimal AWS Lambda handler that wraps the `leo` CLI. You can invoke it through a Lambda Function URL and pass the command arguments to run `leo` with faster CPU (by using larger Lambda sizes).
 
-Important: AWS Lambda does not provide GPUs. If you require GPU, consider ECS/EKS or EC2 with GPUs.
-
 ## Features
 
 - Accepts args via GET `?cmd=...` or POST JSON `{ "cmd": "..." }` or `{ "args": ["..."] }`
