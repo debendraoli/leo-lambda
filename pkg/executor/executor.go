@@ -1,3 +1,4 @@
+// Package executor provides a small helper to run external processes (like the leo CLI)
 package executor
 
 import (

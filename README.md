@@ -4,27 +4,21 @@ This project exposes a minimal AWS Lambda handler that wraps the `leo` CLI. You 
 
 ## Features
 
-- Accepts args via GET `?cmd=...` or POST JSON `{ "cmd": "..." }` or `{ "args": ["..."] }`
-- Optional `timeout` (e.g., `45s`, `2m`) and `workdir` (default `/tmp/leo-work`)
+- Accepts args via POST JSON `{ "cmd": "..." }` or `{ "args": ["..."] }` (POST-only)
+- Optional `workdir` (default `/tmp/leo-work`)
 - Captures stdout/stderr, exit code, truncates output near Lambda 6MB limit
 - Configurable binary via `LEO_BIN` env var; use `DRY_RUN=true` to echo the command for testing
 - Allowlist subcommands with `ALLOWED_COMMANDS` (comma-separated, defaults to `execute`)
+- Injects `--endpoint` from `ENDPOINT` env if not provided explicitly in args (default: <https://api.explorer.provable.com/v1>)
+- Forces leo home to the workdir by injecting `--home <workdir>` when not set
 
 ## API (execute only)
 
-The Lambda wraps `leo execute` and supports argument passing via GET or POST. It also supports a contract allowlist and private key injection via environment variables.
+The Lambda wraps `leo execute` and supports argument passing via POST. It also supports a contract allowlist and private key injection via environment variables.
 
 - ALLOWED_COMMANDS: defaults to `execute` (only execute allowed). You may add `version` if you want to permit `--version` tests.
 - ALLOWED_CONTRACTS: optional comma-separated list of allowed contracts (without method), e.g. `vlink_token_service_v7.aleo`.
-- Private key injection: if `--private-key`/`-k` is not present in args, the handler injects `--private-key` from `LEO_PRIVATE_KEY` (or `WALLET_PRIVATE_KEY`).
-
-### GET example
-
-Query string with cmd (shell-like string):
-
-```text
-?cmd=execute vlink_token_service_v7.aleo/token_receive_public --amount 1 --recipient aleo1...&timeout=90s
-```
+- Private key injection: if `--private-key`/`-k` is not present in args, the handler injects `--private-key` from `ALEO_PRIVATE_KEY`.
 
 ### POST example (args array)
 
@@ -35,8 +29,7 @@ Query string with cmd (shell-like string):
     "vlink_token_service_v7.aleo/token_receive_public",
     "--amount", "1",
     "--recipient", "aleo1..."
-  ],
-  "timeout": "90s"
+  ]
 }
 ```
 
@@ -44,8 +37,7 @@ Query string with cmd (shell-like string):
 
 ```json
 {
-  "cmd": "execute vlink_token_service_v7.aleo/token_receive_public --amount 1 --recipient aleo1...",
-  "timeout": "90s"
+  "cmd": "execute vlink_token_service_v7.aleo/token_receive_public --amount 1 --recipient aleo1..."
 }
 ```
 
@@ -97,7 +89,8 @@ This repo includes a Dockerfile that builds the Go bootstrap and includes a pre-
 - `LEO_BIN=/usr/local/bin/leo` (if not default)
 - `ALLOWED_COMMANDS=execute` (default)
 - `ALLOWED_CONTRACTS=vlink_token_service_v7.aleo` (example)
-- `LEO_PRIVATE_KEY=<your_private_key>` (or `WALLET_PRIVATE_KEY`)
+- `ALEO_PRIVATE_KEY=<your_private_key>`
+- `ENDPOINT=https://api.explorer.provable.com/v1` (optional; default shown)
 
 1. Enable a Function URL (auth as needed) and invoke with the API above.
 

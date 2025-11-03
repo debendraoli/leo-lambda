@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"testing"
-	"time"
 )
 
 // findLeo returns the path to the leo binary or empty if not found
@@ -30,7 +29,6 @@ func TestIntegration_LeoVersion_Executor(t *testing.T) {
 	res := Run(context.Background(), Config{
 		BinPath: bin,
 		Args:    []string{"--version"},
-		Timeout: 30 * time.Second,
 	})
 	if res.ExitCode != 0 {
 		t.Fatalf("leo --version failed: exit=%d stderr=%s", res.ExitCode, res.Stderr)

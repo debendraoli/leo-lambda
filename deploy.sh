@@ -21,8 +21,9 @@ set -euo pipefail
 #   # Optional Lambda env vars:
 #   ALLOWED_COMMANDS=execute \
 #   ALLOWED_CONTRACTS=vlink_token_service_v7.aleo \
-#   LEO_PRIVATE_KEY=your_private_key \
+#   ALEO_PRIVATE_KEY=your_private_key \
 #   LEO_BIN=/usr/local/bin/leo \
+#   ENDPOINT=https://api.explorer.provable.com/v1 \
 #   MEMORY_SIZE=2048 \
 #   TIMEOUT=900 \
 #   FUNCTION_URL_AUTH=AWS_IAM            # or NONE
@@ -214,7 +215,7 @@ else
 fi
 
 # Merge or set environment variables when any of the known vars are provided
-KNOWN_ENV_KEYS=(ALLOWED_COMMANDS ALLOWED_CONTRACTS LEO_PRIVATE_KEY LEO_BIN RPC_URL)
+KNOWN_ENV_KEYS=(ALLOWED_COMMANDS ALLOWED_CONTRACTS ALEO_PRIVATE_KEY LEO_BIN ENDPOINT)
 PROVIDED_COUNT=0
 for k in "${KNOWN_ENV_KEYS[@]}"; do
   if [[ -n "${!k:-}" ]]; then

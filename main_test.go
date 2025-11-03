@@ -12,26 +12,7 @@ import (
 	"github.com/aws/aws-lambda-go/events"
 )
 
-func TestParseArgsGET(t *testing.T) {
-	req := events.LambdaFunctionURLRequest{
-		RequestContext: events.LambdaFunctionURLRequestContext{HTTP: events.LambdaFunctionURLRequestContextHTTPDescription{Method: "GET"}},
-		QueryStringParameters: map[string]string{
-			"cmd":     "echo hello",
-			"timeout": "5s",
-		},
-	}
-	args, workdir, _, err := parseArgs(req, "/tmp/leo-work")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(args) != 2 || args[0] != "echo" || args[1] != "hello" {
-		t.Fatalf("bad args: %#v", args)
-	}
-	// timeout removed from parseArgs; Lambda timeout is used
-	if workdir == "" {
-		t.Fatalf("workdir should not be empty")
-	}
-}
+// GET handling removed; no test for GET parsing
 
 // Integration test that calls the handler to execute real leo --version
 func TestIntegration_Handler_LeoVersion(t *testing.T) {
@@ -49,9 +30,13 @@ func TestIntegration_Handler_LeoVersion(t *testing.T) {
 		t.Skip("leo binary not found in PATH and LEO_BIN not set")
 	}
 
+	// Reload config each invocation so the LEO_BIN set here is respected
+	t.Setenv("CONFIG_RELOAD_EACH_INVOCATION", "1")
 	t.Setenv("LEO_BIN", leoBin)
 	// keep DRY_RUN off to actually run leo
 	t.Setenv("DRY_RUN", "")
+	// Allow 'version' in allowed commands to avoid allowlist blocks in environments
+	t.Setenv("ALLOWED_COMMANDS", "execute,version")
 
 	body := InvokeRequest{Args: []string{"--version"}}
 	b, _ := json.Marshal(body)
@@ -153,7 +138,7 @@ func TestPrivateKeyInjection_WhenMissingInArgs(t *testing.T) {
 	t.Setenv("DRY_RUN", "true")
 	t.Setenv("ALLOWED_COMMANDS", "execute")
 	t.Setenv("ALLOWED_CONTRACTS", "vlink_token_service_v7.aleo")
-	t.Setenv("LEO_PRIVATE_KEY", "abc123")
+	t.Setenv("ALEO_PRIVATE_KEY", "abc123")
 	body := InvokeRequest{Args: []string{"execute", "vlink_token_service_v7.aleo/token_receive_public"}}
 	b, _ := json.Marshal(body)
 	req := events.LambdaFunctionURLRequest{
@@ -174,7 +159,7 @@ func TestRPCURLEndpointInjection(t *testing.T) {
 	t.Setenv("DRY_RUN", "true")
 	t.Setenv("ALLOWED_COMMANDS", "execute")
 	t.Setenv("ALLOWED_CONTRACTS", "vlink_token_service_v7.aleo")
-	t.Setenv("RPC_URL", "https://example-rpc")
+	t.Setenv("ENDPOINT", "https://example-rpc")
 
 	body := InvokeRequest{Args: []string{"execute", "vlink_token_service_v7.aleo/token_receive_public", "--network", "testnet"}}
 	b, _ := json.Marshal(body)
@@ -189,7 +174,7 @@ func TestRPCURLEndpointInjection(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, resp.Body)
 	}
-	// In DRY_RUN mode, stdout is the echoed args. Ensure --endpoint and the RPC_URL appear.
+	// In DRY_RUN mode, stdout is the echoed args. Ensure --endpoint and the endpoint value appear.
 	var r Response
 	if err := json.Unmarshal([]byte(resp.Body), &r); err != nil {
 		t.Fatalf("invalid response json: %v", err)
