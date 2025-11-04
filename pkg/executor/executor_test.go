@@ -2,8 +2,8 @@ package executor
 
 import (
 	"context"
+	"strings"
 	"testing"
-	"time"
 )
 
 func TestRunEcho(t *testing.T) {
@@ -12,25 +12,32 @@ func TestRunEcho(t *testing.T) {
 	res := Run(context.Background(), Config{
 		BinPath: bin,
 		Args:    []string{"hello", "world"},
-		Timeout: 5 * time.Second,
 	})
 	if res.ExitCode != 0 {
 		t.Fatalf("expected exit 0, got %d, stderr=%q", res.ExitCode, res.Stderr)
 	}
-	if res.TimedOut {
-		t.Fatalf("unexpected timeout")
-	}
 	if got := res.Stdout; got == "" {
 		t.Fatalf("expected some stdout, got empty")
 	}
+	if res.Truncated {
+		t.Fatalf("unexpected truncation for echo command")
+	}
 }
 
-func TestTimeout(t *testing.T) {
-	// Use a portable sleep via shell
-	bin := "/bin/sh"
-	args := []string{"-c", "sleep 2"}
-	res := Run(context.Background(), Config{BinPath: bin, Args: args, Timeout: 200 * time.Millisecond})
-	if !res.TimedOut {
-		t.Fatalf("expected timeout, got %+v", res)
+func TestRun_TruncatesAndKeepsTail(t *testing.T) {
+	cmd := "for i in $(seq 1 200); do echo line-$i; done"
+	res := Run(context.Background(), Config{
+		BinPath:        "/bin/sh",
+		Args:           []string{"-c", cmd},
+		MaxOutputBytes: 512,
+	})
+	if !res.Truncated {
+		t.Fatalf("expected truncation for large output")
+	}
+	if strings.Contains(res.Stdout, "line-1\n") {
+		t.Fatalf("expected oldest lines to be dropped, found line-1 in %q", res.Stdout)
+	}
+	if !strings.Contains(res.Stdout, "line-200") {
+		t.Fatalf("expected tail of output to be preserved, got %q", res.Stdout)
 	}
 }

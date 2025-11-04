@@ -12,8 +12,6 @@ import (
 	"github.com/aws/aws-lambda-go/events"
 )
 
-// GET handling removed; no test for GET parsing
-
 // Integration test that calls the handler to execute real leo --version
 func TestIntegration_Handler_LeoVersion(t *testing.T) {
 	if os.Getenv("LEO_INTEGRATION") != "1" {

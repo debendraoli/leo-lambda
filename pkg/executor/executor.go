@@ -2,24 +2,19 @@
 package executor
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"os/exec"
 	"strings"
 	"syscall"
-	"time"
 )
 
 type Config struct {
 	BinPath        string
 	Args           []string
 	WorkDir        string
-	Timeout        time.Duration
 	MaxOutputBytes int
-	ExtraEnv       map[string]string
 }
 
 type Result struct {
@@ -27,116 +22,131 @@ type Result struct {
 	Stdout    string
 	Stderr    string
 	Truncated bool
-	TimedOut  bool
 }
 
-// Run executes the provided command with the given configuration.
-func Run(parent context.Context, cfg Config) Result {
-	// Defaults
-	if cfg.MaxOutputBytes <= 0 {
-		cfg.MaxOutputBytes = 5_000_000
-	}
-	if strings.TrimSpace(cfg.WorkDir) == "" {
-		cfg.WorkDir = "/tmp"
-	}
+const defaultMaxOutputBytes = 64 * 1024
 
-	// Only enforce a timeout if explicitly provided. Otherwise, rely on the parent
-	// context (e.g., Lambda's own timeout) to cancel execution.
-	ctx := parent
-	var cancel context.CancelFunc = func() {}
-	if cfg.Timeout > 0 {
-		ctx, cancel = context.WithTimeout(parent, cfg.Timeout)
+// Run executes the provided command with the given configuration.
+func Run(ctx context.Context, cfg Config) Result {
+	if cfg.MaxOutputBytes <= 0 {
+		cfg.MaxOutputBytes = defaultMaxOutputBytes
 	}
-	defer cancel()
 
 	cmd := exec.CommandContext(ctx, cfg.BinPath, cfg.Args...)
 	cmd.Dir = cfg.WorkDir
 
-	// Always run in a new process group so we can kill the entire subtree on timeout
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-
-	// Merge environment
-	env := os.Environ()
-	for k, v := range cfg.ExtraEnv {
-		env = append(env, fmt.Sprintf("%s=%s", k, v))
-	}
-	cmd.Env = env
-
-	var outBuf, errBuf limitedBuffer
-	outBuf.Limit = cfg.MaxOutputBytes
-	errBuf.Limit = cfg.MaxOutputBytes
-	cmd.Stdout = &outBuf
-	cmd.Stderr = &errBuf
-
-	// Start and wait with context handling so we can kill the process group on timeout
-	runErr := cmd.Start()
-	if runErr == nil {
-		done := make(chan error, 1)
-		go func() { done <- cmd.Wait() }()
-		select {
-		case <-ctx.Done():
-			// Timeout/cancel: kill the entire process group: negative pid targets the pgid
-			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-			<-done // ensure Wait() returns
-			runErr = ctx.Err()
-		case err := <-done:
-			runErr = err
+	if cfg.WorkDir != "" {
+		if err := os.MkdirAll(cfg.WorkDir, 0o755); err != nil {
+			errMsg, truncated := clipToLimit(err.Error(), cfg.MaxOutputBytes)
+			return Result{
+				ExitCode:  1,
+				Stdout:    "",
+				Stderr:    strings.TrimSpace(errMsg),
+				Truncated: truncated,
+			}
 		}
 	}
+
+	stdoutBuf := newLimitedBuffer(cfg.MaxOutputBytes)
+	stderrBuf := newLimitedBuffer(cfg.MaxOutputBytes)
+	cmd.Stdout = stdoutBuf
+	cmd.Stderr = stderrBuf
+
+	runErr := cmd.Run()
 
 	res := Result{
-		Stdout:    outBuf.String(),
-		Stderr:    errBuf.String(),
-		Truncated: outBuf.Truncated || errBuf.Truncated,
+		Stdout:    stdoutBuf.String(),
+		Stderr:    stderrBuf.String(),
+		Truncated: stdoutBuf.Truncated || stderrBuf.Truncated,
 	}
 
-	if ctx.Err() != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		res.TimedOut = true
+	if runErr == nil {
+		res.Stderr = strings.TrimSpace(res.Stderr)
+		return res
 	}
 
-	if runErr != nil {
-		// Extract exit code when possible
-		var ee *exec.ExitError
-		if errors.As(runErr, &ee) {
-			// On Unix, get the status
-			if status, ok := ee.Sys().(syscall.WaitStatus); ok {
-				res.ExitCode = status.ExitStatus()
-			} else {
-				res.ExitCode = 1
-			}
-		} else if res.TimedOut {
-			res.ExitCode = 124 // conventional timeout code
-		} else {
-			res.ExitCode = 1
-		}
-	} else {
-		res.ExitCode = 0
+	res.ExitCode = exitCodeFromError(runErr)
+	combined, errTruncated := appendError(res.Stderr, runErr, cfg.MaxOutputBytes)
+	res.Stderr = strings.TrimSpace(combined)
+	res.Truncated = res.Truncated || errTruncated
+	if res.Stderr == "" {
+		res.Stderr = runErr.Error()
 	}
-
 	return res
 }
 
-// limitedBuffer is a bytes.Buffer-like writer that stops after Limit bytes.
+func exitCodeFromError(runErr error) int {
+	var ee *exec.ExitError
+	if errors.As(runErr, &ee) {
+		if ee.ProcessState != nil {
+			if status, ok := ee.Sys().(syscall.WaitStatus); ok {
+				return status.ExitStatus()
+			}
+			return ee.ExitCode()
+		}
+	}
+	return 1
+}
+
+func appendError(stderr string, runErr error, limit int) (string, bool) {
+	msg := runErr.Error()
+	if stderr == "" {
+		return clipToLimit(msg, limit)
+	}
+	if strings.Contains(stderr, msg) {
+		return stderr, false
+	}
+	combined := stderr + "\n" + msg
+	return clipToLimit(combined, limit)
+}
+
+func clipToLimit(val string, limit int) (string, bool) {
+	if limit <= 0 || len(val) <= limit {
+		return val, false
+	}
+	return val[len(val)-limit:], true
+}
+
 type limitedBuffer struct {
-	bytes.Buffer
+	buf       []byte
 	Limit     int
 	Truncated bool
 }
 
+func newLimitedBuffer(limit int) *limitedBuffer {
+	return &limitedBuffer{Limit: limit}
+}
+
 func (b *limitedBuffer) Write(p []byte) (int, error) {
-	if b.Limit <= 0 {
-		return b.Buffer.Write(p)
+	if len(p) == 0 {
+		return 0, nil
 	}
-	remaining := b.Limit - b.Len()
-	if remaining <= 0 {
+	if b.Limit <= 0 {
+		b.buf = append(b.buf, p...)
+		return len(p), nil
+	}
+	if len(p) >= b.Limit {
+		if len(b.buf) > 0 {
+			b.Truncated = true
+		}
+		b.buf = append(b.buf[:0], p[len(p)-b.Limit:]...)
 		b.Truncated = true
 		return len(p), nil
 	}
-	if len(p) <= remaining {
-		return b.Buffer.Write(p)
+	free := b.Limit - len(b.buf)
+	if len(p) <= free {
+		b.buf = append(b.buf, p...)
+		return len(p), nil
 	}
-	// Write only what fits
-	_, _ = b.Buffer.Write(p[:remaining])
+	drop := len(p) - free
+	if drop > len(b.buf) {
+		drop = len(b.buf)
+	}
+	b.buf = append(b.buf[drop:], p...)
 	b.Truncated = true
 	return len(p), nil
+}
+
+func (b *limitedBuffer) String() string {
+	return string(b.buf)
 }

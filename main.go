@@ -21,19 +21,16 @@ import (
 )
 
 type InvokeRequest struct {
-	Args    []string          `json:"args"`
-	Cmd     string            `json:"cmd"`
-	Workdir string            `json:"workdir"`
-	Env     map[string]string `json:"env"`
+	Args []string `json:"args"`
+	Cmd  string   `json:"cmd"`
 }
 
 type Response struct {
-	ExitCode  int               `json:"exitCode"`
-	Duration  float64           `json:"duration"`
-	Stdout    string            `json:"stdout"`
-	Stderr    string            `json:"stderr"`
-	Truncated bool              `json:"truncated"`
-	TimedOut  bool              `json:"timedOut"`
+	ExitCode  int               `json:"exitCode,omitempty"`
+	Duration  float64           `json:"duration,omitempty"`
+	Stdout    string            `json:"stdout,omitempty"`
+	Stderr    string            `json:"stderr,omitempty"`
+	Truncated bool              `json:"truncated,omitempty"`
 	Meta      map[string]string `json:"meta,omitempty"`
 }
 
@@ -41,11 +38,11 @@ type Response struct {
 type EnvConfig struct {
 	AllowedCommands  []string `env:"ALLOWED_COMMANDS" envSeparator:"," envDefault:"execute"`
 	AllowedContracts []string `env:"ALLOWED_CONTRACTS" envSeparator:","`
-	PrivateKey       string   `env:"PRIVATE_KEY,notEmpty"`
+	PrivateKey       string   `env:"PRIVATE_KEY"`
 	LeoBin           string   `env:"LEO_BIN" envDefault:"leo"`
 	DryRun           bool     `env:"DRY_RUN" envDefault:"false"`
 	MaxOutputBytes   int      `env:"MAX_OUTPUT_BYTES" envDefault:"5500000"`
-	DefaultWorkdir   string   `env:"WORKDIR" envDefault:"/tmp/leo-work"`
+	DefaultWorkdir   string   `env:"WORKDIR" envDefault:"/tmp/leo"`
 	EndPoint         string   `env:"ENDPOINT" envDefault:"https://api.explorer.provable.com/v1"`
 }
 
@@ -54,12 +51,19 @@ func loadEnvConfig() (*EnvConfig, error) {
 	return c, env.Parse(c)
 }
 
-var cachedCfg *EnvConfig
+var (
+	cachedCfg  *EnvConfig
+	leoVersion string
+)
 
 func init() {
 	// Parse env once on cold start for performance in Lambda
 	if c, err := loadEnvConfig(); err == nil {
 		cachedCfg = c
+		leoVersion, err = utils.GetLeoVersion()
+		if err != nil {
+			panic(fmt.Sprintf("failed to get leo version: %v", err))
+		}
 	}
 }
 
@@ -76,13 +80,12 @@ func currentConfig() (*EnvConfig, error) {
 }
 
 // parseArgs parses the request and returns args, workdir, and extra env
-func parseArgs(req events.LambdaFunctionURLRequest, defaultWorkdir string) ([]string, string, map[string]string, error) {
+func parseArgs(req events.LambdaFunctionURLRequest, defaultWorkdir string) ([]string, string, error) {
 	workdir := defaultWorkdir
-	extraEnv := map[string]string{}
 
 	// Only POST body JSON is supported
 	if req.RequestContext.HTTP.Method != http.MethodPost {
-		return nil, "", nil, errors.New("only POST with JSON body is supported")
+		return nil, "", errors.New("only POST with JSON body is supported")
 	}
 
 	var body InvokeRequest
@@ -90,32 +93,26 @@ func parseArgs(req events.LambdaFunctionURLRequest, defaultWorkdir string) ([]st
 	if req.IsBase64Encoded {
 		dec, derr := utils.DecodeBase64(req.Body)
 		if derr != nil {
-			return nil, "", nil, fmt.Errorf("invalid base64 body: %w", derr)
+			return nil, "", fmt.Errorf("invalid base64 body: %w", derr)
 		}
 		raw = dec
 	}
 	if err := json.Unmarshal(raw, &body); err != nil {
-		return nil, "", nil, fmt.Errorf("invalid JSON body: %w", err)
-	}
-	if strings.TrimSpace(body.Workdir) != "" {
-		workdir = body.Workdir
-	}
-	if body.Env != nil {
-		extraEnv = body.Env
+		return nil, "", fmt.Errorf("invalid JSON body: %w", err)
 	}
 	if len(body.Args) > 0 {
-		return body.Args, workdir, extraEnv, nil
+		return body.Args, workdir, nil
 	}
 	if strings.TrimSpace(body.Cmd) != "" {
 		p := shellwords.NewParser()
 		p.ParseEnv = true
 		args, err := p.Parse(body.Cmd)
 		if err != nil {
-			return nil, "", nil, fmt.Errorf("invalid cmd: %w", err)
+			return nil, "", fmt.Errorf("invalid cmd: %w", err)
 		}
-		return args, workdir, extraEnv, nil
+		return args, workdir, nil
 	}
-	return nil, "", nil, errors.New("missing args or cmd in request body")
+	return nil, "", errors.New("missing args or cmd in request body")
 }
 
 func handler(ctx context.Context, req events.LambdaFunctionURLRequest) (events.LambdaFunctionURLResponse, error) {
@@ -124,7 +121,7 @@ func handler(ctx context.Context, req events.LambdaFunctionURLRequest) (events.L
 		return jsonResp(http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("invalid env config: %v", cfgErr)}), nil
 	}
 
-	args, workdir, extraEnv, err := parseArgs(req, cfgEnv.DefaultWorkdir)
+	args, workdir, err := parseArgs(req, cfgEnv.DefaultWorkdir)
 	if err != nil {
 		return jsonResp(http.StatusBadRequest, map[string]string{"error": err.Error()}), nil
 	}
@@ -158,13 +155,6 @@ func handler(ctx context.Context, req events.LambdaFunctionURLRequest) (events.L
 				return jsonResp(http.StatusBadRequest, map[string]string{"error": "missing execute contract/method argument"}), nil
 			}
 		}
-
-		// Inject private key if not provided via args and available in env
-		if !utils.HasAnyFlag(args, "--private-key", "-k") {
-			if pk := strings.TrimSpace(cfgEnv.PrivateKey); pk != "" {
-				args = utils.InjectFlagValueAfterSubcommand(args, "execute", "--private-key", pk)
-			}
-		}
 	}
 
 	// Ensure leo uses this workdir as its home directory unless overridden.
@@ -186,17 +176,12 @@ func handler(ctx context.Context, req events.LambdaFunctionURLRequest) (events.L
 		Args:           args,
 		WorkDir:        workdir,
 		MaxOutputBytes: cfgEnv.MaxOutputBytes,
-		ExtraEnv:       extraEnv,
 	}
 
 	start := time.Now()
 	res := executor.Run(ctx, cfg)
 	dur := time.Since(start)
-
 	status := http.StatusOK
-	if res.TimedOut || res.ExitCode != 0 {
-		status = http.StatusInternalServerError
-	}
 
 	payload := Response{
 		ExitCode:  res.ExitCode,
@@ -204,10 +189,8 @@ func handler(ctx context.Context, req events.LambdaFunctionURLRequest) (events.L
 		Stdout:    res.Stdout,
 		Stderr:    res.Stderr,
 		Truncated: res.Truncated,
-		TimedOut:  res.TimedOut,
 		Meta: map[string]string{
-			"workdir": workdir,
-			"bin":     bin,
+			"version": leoVersion,
 			"home":    utils.GetFlagValue(args, "--home"),
 		},
 	}

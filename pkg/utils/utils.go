@@ -2,10 +2,24 @@
 package utils
 
 import (
+	"bytes"
 	"encoding/base64"
 	"errors"
+	"fmt"
+	"os"
+	"os/exec"
 	"strings"
 )
+
+func findLeo() string {
+	if p := os.Getenv("LEO_BIN"); p != "" {
+		return p
+	}
+	if p, err := exec.LookPath("leo"); err == nil {
+		return p
+	}
+	return ""
+}
 
 // DecodeBase64 decodes a standard base64-encoded string.
 func DecodeBase64(s string) ([]byte, error) {
@@ -134,4 +148,30 @@ func GetFlagValue(args []string, flag string) string {
 		}
 	}
 	return ""
+}
+
+// Run runs the arbitrary command with given args and returns the result.
+func RunLeoBin(args ...string) (string, error) {
+	bin := findLeo()
+	cmd := exec.Command(bin, args...)
+	var outBuf, errBuf bytes.Buffer
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &errBuf
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("leo command failed: %v, stderr=%s", err, errBuf.String())
+	}
+	return outBuf.String(), nil
+}
+
+// GetLeoVersion returns the leo version
+func GetLeoVersion() (string, error) {
+	version, err := RunLeoBin("--version")
+	if err != nil {
+		return "", err
+	}
+	parts := strings.Fields(version)
+	if len(parts) >= 2 {
+		return parts[1], nil
+	}
+	return "", fmt.Errorf("unexpected version output: %q", version)
 }
