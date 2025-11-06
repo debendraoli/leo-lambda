@@ -4,6 +4,7 @@ package executor
 import (
 	"context"
 	"errors"
+	"leo-cli-lambda/pkg/utils"
 	"os"
 	"os/exec"
 	"strings"
@@ -25,6 +26,11 @@ type Result struct {
 }
 
 const defaultMaxOutputBytes = 64 * 1024
+
+var (
+	stdOutExcludedStrings = []string{"Installation"}
+	stdErrExcludedStrings = []string{"Failed to store", "powers-of-beta"}
+)
 
 // Run executes the provided command with the given configuration.
 func Run(ctx context.Context, cfg Config) Result {
@@ -54,8 +60,8 @@ func Run(ctx context.Context, cfg Config) Result {
 	runErr := cmd.Run()
 
 	res := Result{
-		Stdout:    stdoutBuf.String(),
-		Stderr:    stderrBuf.String(),
+		Stdout:    utils.FilterLines(stdoutBuf.String(), stdOutExcludedStrings),
+		Stderr:    utils.FilterLines(stderrBuf.String(), stdErrExcludedStrings),
 		Truncated: stdoutBuf.Truncated || stderrBuf.Truncated,
 	}
 

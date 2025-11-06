@@ -19,7 +19,7 @@ import (
 )
 
 type Response struct {
-	ExitCode  int               `json:"exitCode,omitempty"`
+	ExitCode  int               `json:"exitCode"`
 	Duration  float64           `json:"duration,omitempty"`
 	Stdout    string            `json:"stdout,omitempty"`
 	Stderr    string            `json:"stderr,omitempty"`

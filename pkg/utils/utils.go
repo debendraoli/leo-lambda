@@ -219,3 +219,24 @@ func GetLeoVersion() (string, error) {
 	}
 	return "", fmt.Errorf("unexpected version output: %q", version)
 }
+
+
+// filterLines removes lines containing any of the given substrings.
+func FilterLines(text string, exclude []string) string {
+	lines := strings.Split(text, "\n")
+	var filtered []string
+
+	for _, line := range lines {
+		skip := false
+		for _, bad := range exclude {
+			if strings.Contains(line, bad) {
+				skip = true
+				break
+			}
+		}
+		if !skip {
+			filtered = append(filtered, line)
+		}
+	}
+	return strings.TrimSpace(strings.Join(filtered, "\n"))
+}
