@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/aws/aws-lambda-go/events"
+	"github.com/debendraoli/leo-lambda/pkg/utils"
 )
 
 // Integration test that calls the handler to execute real leo --version
@@ -36,7 +37,7 @@ func TestIntegration_Handler_LeoVersion(t *testing.T) {
 	// Allow 'version' in allowed commands to avoid allowlist blocks in environments
 	t.Setenv("ALLOWED_COMMANDS", "execute,version")
 
-	body := InvokeRequest{Args: []string{"--version"}}
+	body := utils.InvokeRequest{Args: []string{"--version"}}
 	b, _ := json.Marshal(body)
 	req := events.LambdaFunctionURLRequest{
 		RequestContext: events.LambdaFunctionURLRequestContext{HTTP: events.LambdaFunctionURLRequestContextHTTPDescription{Method: "POST"}},
@@ -57,7 +58,7 @@ func TestHandlerDryRun(t *testing.T) {
 	t.Setenv("DRY_RUN", "true")
 	t.Setenv("ALLOWED_COMMANDS", "execute,version")
 	// Provide a small timeout
-	body := InvokeRequest{Cmd: "execute --help"}
+	body := utils.InvokeRequest{Cmd: "execute --help"}
 	b, _ := json.Marshal(body)
 	req := events.LambdaFunctionURLRequest{
 		RequestContext: events.LambdaFunctionURLRequestContext{HTTP: events.LambdaFunctionURLRequestContextHTTPDescription{Method: "POST"}},
@@ -76,7 +77,7 @@ func TestAllowlist_BlocksDisallowed(t *testing.T) {
 	t.Setenv("CONFIG_RELOAD_EACH_INVOCATION", "1")
 	t.Setenv("DRY_RUN", "true")
 	t.Setenv("ALLOWED_COMMANDS", "execute")
-	body := InvokeRequest{Args: []string{"build", "--flag"}}
+	body := utils.InvokeRequest{Args: []string{"build", "--flag"}}
 	b, _ := json.Marshal(body)
 	req := events.LambdaFunctionURLRequest{
 		RequestContext: events.LambdaFunctionURLRequestContext{HTTP: events.LambdaFunctionURLRequestContextHTTPDescription{Method: "POST"}},
@@ -95,7 +96,7 @@ func TestAllowlist_AllowsExecute(t *testing.T) {
 	t.Setenv("CONFIG_RELOAD_EACH_INVOCATION", "1")
 	t.Setenv("DRY_RUN", "true")
 	t.Setenv("ALLOWED_COMMANDS", "execute")
-	body := InvokeRequest{Args: []string{"execute", "--help"}}
+	body := utils.InvokeRequest{Args: []string{"execute", "--help"}}
 	b, _ := json.Marshal(body)
 	req := events.LambdaFunctionURLRequest{
 		RequestContext: events.LambdaFunctionURLRequestContext{HTTP: events.LambdaFunctionURLRequestContextHTTPDescription{Method: "POST"}},
@@ -116,7 +117,7 @@ func TestContractAllowlist_BlocksContract(t *testing.T) {
 	t.Setenv("ALLOWED_COMMANDS", "execute")
 	t.Setenv("ALLOWED_CONTRACTS", "allowed_contract")
 	// Attempt to execute a disallowed contract
-	body := InvokeRequest{Args: []string{"execute", "disallowed_contract/token_receive_public"}}
+	body := utils.InvokeRequest{Args: []string{"execute", "disallowed_contract/token_receive_public"}}
 	b, _ := json.Marshal(body)
 	req := events.LambdaFunctionURLRequest{
 		RequestContext: events.LambdaFunctionURLRequestContext{HTTP: events.LambdaFunctionURLRequestContextHTTPDescription{Method: "POST"}},
@@ -137,7 +138,7 @@ func TestPrivateKeyInjection_WhenMissingInArgs(t *testing.T) {
 	t.Setenv("ALLOWED_COMMANDS", "execute")
 	t.Setenv("ALLOWED_CONTRACTS", "vlink_token_service_v7.aleo")
 	t.Setenv("ALEO_PRIVATE_KEY", "abc123")
-	body := InvokeRequest{Args: []string{"execute", "vlink_token_service_v7.aleo/token_receive_public"}}
+	body := utils.InvokeRequest{Args: []string{"execute", "vlink_token_service_v7.aleo/token_receive_public"}}
 	b, _ := json.Marshal(body)
 	req := events.LambdaFunctionURLRequest{
 		RequestContext: events.LambdaFunctionURLRequestContext{HTTP: events.LambdaFunctionURLRequestContextHTTPDescription{Method: "POST"}},
@@ -159,7 +160,7 @@ func TestRPCURLEndpointInjection(t *testing.T) {
 	t.Setenv("ALLOWED_CONTRACTS", "vlink_token_service_v7.aleo")
 	t.Setenv("ENDPOINT", "https://example-rpc")
 
-	body := InvokeRequest{Args: []string{"execute", "vlink_token_service_v7.aleo/token_receive_public", "--network", "testnet"}}
+	body := utils.InvokeRequest{Args: []string{"execute", "vlink_token_service_v7.aleo/token_receive_public", "--network", "testnet"}}
 	b, _ := json.Marshal(body)
 	req := events.LambdaFunctionURLRequest{
 		RequestContext: events.LambdaFunctionURLRequestContext{HTTP: events.LambdaFunctionURLRequestContextHTTPDescription{Method: "POST"}},

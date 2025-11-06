@@ -1,4 +1,4 @@
-module leo-cli-lambda
+module github.com/debendraoli/leo-lambda
 
 go 1.25
 

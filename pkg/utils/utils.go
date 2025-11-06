@@ -4,14 +4,24 @@ package utils
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"strings"
+
+	"github.com/aws/aws-lambda-go/events"
+	"github.com/mattn/go-shellwords"
 )
 
-func findLeo() string {
+type InvokeRequest struct {
+	Args []string `json:"args"`
+	Cmd  string   `json:"cmd"`
+}
+
+func FindLeo() string {
 	if p := os.Getenv("LEO_BIN"); p != "" {
 		return p
 	}
@@ -26,6 +36,40 @@ func DecodeBase64(s string) ([]byte, error) {
 	return base64.StdEncoding.DecodeString(s)
 }
 
+// ParseArgs parses the request and returns args
+func ParseArgs(req events.LambdaFunctionURLRequest) ([]string, error) {
+	// Only POST body JSON is supported
+	if req.RequestContext.HTTP.Method != http.MethodPost {
+		return nil, errors.New("only POST with JSON body is supported")
+	}
+
+	var body InvokeRequest
+	raw := []byte(req.Body)
+	if req.IsBase64Encoded {
+		dec, derr := DecodeBase64(req.Body)
+		if derr != nil {
+			return nil, fmt.Errorf("invalid base64 body: %w", derr)
+		}
+		raw = dec
+	}
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return nil, fmt.Errorf("invalid JSON body: %w", err)
+	}
+	if len(body.Args) > 0 {
+		return body.Args, nil
+	}
+	if strings.TrimSpace(body.Cmd) != "" {
+		p := shellwords.NewParser()
+		p.ParseEnv = true
+		args, err := p.Parse(body.Cmd)
+		if err != nil {
+			return nil, fmt.Errorf("invalid cmd: %w", err)
+		}
+		return args, nil
+	}
+	return nil, errors.New("missing args or cmd in request body")
+}
+
 // FirstSubcommand returns the first non-flag token from args (case-insensitive).
 // Treats "--" as end of options; the token after may be considered a subcommand if present.
 func FirstSubcommand(args []string) (string, error) {
@@ -33,7 +77,7 @@ func FirstSubcommand(args []string) (string, error) {
 		return "", errors.New("no arguments provided")
 	}
 	skipFlags := true
-	for i := 0; i < len(args); i++ {
+	for i := range args {
 		tok := args[i]
 		if skipFlags {
 			if tok == "--" {
@@ -152,7 +196,7 @@ func GetFlagValue(args []string, flag string) string {
 
 // Run runs the arbitrary command with given args and returns the result.
 func RunLeoBin(args ...string) (string, error) {
-	bin := findLeo()
+	bin := FindLeo()
 	cmd := exec.Command(bin, args...)
 	var outBuf, errBuf bytes.Buffer
 	cmd.Stdout = &outBuf

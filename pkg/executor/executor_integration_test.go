@@ -3,26 +3,16 @@ package executor
 import (
 	"context"
 	"os"
-	"os/exec"
 	"testing"
-)
 
-// findLeo returns the path to the leo binary or empty if not found
-func findLeo() string {
-	if p := os.Getenv("LEO_BIN"); p != "" {
-		return p
-	}
-	if p, err := exec.LookPath("leo"); err == nil {
-		return p
-	}
-	return ""
-}
+	"github.com/debendraoli/leo-lambda/pkg/utils"
+)
 
 func TestIntegration_LeoVersion_Executor(t *testing.T) {
 	if os.Getenv("LEO_INTEGRATION") != "1" {
 		t.Skip("LEO_INTEGRATION != 1; skipping real leo execution")
 	}
-	bin := findLeo()
+	bin := utils.FindLeo()
 	if bin == "" {
 		t.Skip("leo binary not found in PATH and LEO_BIN not set")
 	}

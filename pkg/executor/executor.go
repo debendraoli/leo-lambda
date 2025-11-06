@@ -40,7 +40,6 @@ func Run(ctx context.Context, cfg Config) Result {
 			errMsg, truncated := clipToLimit(err.Error(), cfg.MaxOutputBytes)
 			return Result{
 				ExitCode:  1,
-				Stdout:    "",
 				Stderr:    strings.TrimSpace(errMsg),
 				Truncated: truncated,
 			}
@@ -138,10 +137,7 @@ func (b *limitedBuffer) Write(p []byte) (int, error) {
 		b.buf = append(b.buf, p...)
 		return len(p), nil
 	}
-	drop := len(p) - free
-	if drop > len(b.buf) {
-		drop = len(b.buf)
-	}
+	drop := min(len(p)-free, len(b.buf))
 	b.buf = append(b.buf[drop:], p...)
 	b.Truncated = true
 	return len(p), nil

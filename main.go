@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -14,16 +13,10 @@ import (
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
 	env "github.com/caarlos0/env/v11"
-	shellwords "github.com/mattn/go-shellwords"
 
-	"leo-cli-lambda/pkg/executor"
-	"leo-cli-lambda/pkg/utils"
+	"github.com/debendraoli/leo-lambda/pkg/executor"
+	"github.com/debendraoli/leo-lambda/pkg/utils"
 )
-
-type InvokeRequest struct {
-	Args []string `json:"args"`
-	Cmd  string   `json:"cmd"`
-}
 
 type Response struct {
 	ExitCode  int               `json:"exitCode,omitempty"`
@@ -79,49 +72,13 @@ func currentConfig() (*EnvConfig, error) {
 	return loadEnvConfig()
 }
 
-// parseArgs parses the request and returns args, workdir, and extra env
-func parseArgs(req events.LambdaFunctionURLRequest, defaultWorkdir string) ([]string, string, error) {
-	workdir := defaultWorkdir
-
-	// Only POST body JSON is supported
-	if req.RequestContext.HTTP.Method != http.MethodPost {
-		return nil, "", errors.New("only POST with JSON body is supported")
-	}
-
-	var body InvokeRequest
-	raw := []byte(req.Body)
-	if req.IsBase64Encoded {
-		dec, derr := utils.DecodeBase64(req.Body)
-		if derr != nil {
-			return nil, "", fmt.Errorf("invalid base64 body: %w", derr)
-		}
-		raw = dec
-	}
-	if err := json.Unmarshal(raw, &body); err != nil {
-		return nil, "", fmt.Errorf("invalid JSON body: %w", err)
-	}
-	if len(body.Args) > 0 {
-		return body.Args, workdir, nil
-	}
-	if strings.TrimSpace(body.Cmd) != "" {
-		p := shellwords.NewParser()
-		p.ParseEnv = true
-		args, err := p.Parse(body.Cmd)
-		if err != nil {
-			return nil, "", fmt.Errorf("invalid cmd: %w", err)
-		}
-		return args, workdir, nil
-	}
-	return nil, "", errors.New("missing args or cmd in request body")
-}
-
 func handler(ctx context.Context, req events.LambdaFunctionURLRequest) (events.LambdaFunctionURLResponse, error) {
 	cfgEnv, cfgErr := currentConfig()
 	if cfgErr != nil {
 		return jsonResp(http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("invalid env config: %v", cfgErr)}), nil
 	}
 
-	args, workdir, err := parseArgs(req, cfgEnv.DefaultWorkdir)
+	args, err := utils.ParseArgs(req)
 	if err != nil {
 		return jsonResp(http.StatusBadRequest, map[string]string{"error": err.Error()}), nil
 	}
@@ -160,7 +117,7 @@ func handler(ctx context.Context, req events.LambdaFunctionURLRequest) (events.L
 	// Ensure leo uses this workdir as its home directory unless overridden.
 	// Only inject for execute; global flag-only invocations like --version should remain unchanged.
 	if !utils.HasAnyFlag(args, "--home") {
-		args = utils.InjectFlagValueAfterSubcommand(args, subcmd, "--home", workdir)
+		args = utils.InjectFlagValueAfterSubcommand(args, subcmd, "--home", cfgEnv.DefaultWorkdir)
 	}
 
 	// Determine binary path
@@ -174,7 +131,7 @@ func handler(ctx context.Context, req events.LambdaFunctionURLRequest) (events.L
 	cfg := executor.Config{
 		BinPath:        bin,
 		Args:           args,
-		WorkDir:        workdir,
+		WorkDir:        cfgEnv.DefaultWorkdir,
 		MaxOutputBytes: cfgEnv.MaxOutputBytes,
 	}
 
