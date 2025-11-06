@@ -4,11 +4,12 @@ package executor
 import (
 	"context"
 	"errors"
-	"leo-cli-lambda/pkg/utils"
 	"os"
 	"os/exec"
 	"strings"
 	"syscall"
+
+	"github.com/debendraoli/leo-lambda/pkg/utils"
 )
 
 type Config struct {
